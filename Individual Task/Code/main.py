@@ -4,6 +4,10 @@ import shutil
 import pandas as pd
 import numpy as np
 import sklearn as sk
+import scipy as sp
+from scipy.stats.mstats import gmean
+import matplotlib.pyplot as plt
+import pycountry as pyc
 
 FILE_FORMAT = "csv"
 
@@ -34,7 +38,7 @@ def process(df):
     """
     1. Instance - Instance of data (irrelevant)
 
-    2. Year of Record -  Year record was made (possibly unimportant) - scale on max/min
+    2. Year of Record -  Year record was made (possibly unimportant) - scale on geo mean
     3. Gender - Participant gender (relevant) - encode -> (male) (female) (other) - "Bad" -> (other)
     4. Age - Age of participant (relevant) - scale on min/max
     5. Country - Country participant is from/works in (relevant) - use ISO country code ?
@@ -50,28 +54,67 @@ def process(df):
     """
     l = len(df)
     # instance = df.iloc[:, 0]
-    instance = df["Instance"]
-
+    instance = df["Instance"].to_numpy(dtype=int)
+    # plt.figure()
+    # plt.scatter(instance, instance)
+    # plt.xlabel("Instance")
+    # plt.ylabel("Instance")
+    # plt.show()
     # year_record = df.iloc[:, 1]
-    year_record = df["Year of Record"]
+    year_record = df["Year of Record"].to_numpy(dtype=int)
+    # Unique ->
+    year_record = pd.Series(year_record)
+    f_year_record = year_record.where(lambda x: x > 0).dropna().to_numpy(dtype=int)
+    # n_year_record = year_record.where(lambda x: x <= 0).to_numpy(dtype=int)
+    # max_year = max(f_year_record)
+    # min_year = min(f_year_record)
+    year_geo_mean = int(gmean(f_year_record))
+    year_record = year_record.where(lambda x: x > 0).fillna(year_geo_mean).to_numpy(dtype=int) / year_geo_mean
+    # plt.figure()
+    # plt.scatter(year_record, instance)
+    # plt.xlabel("Instance")
+    # plt.ylabel("Year of Record")
+    # plt.show()
     # gender = df.iloc[:, 2]
-    gender = df["Gender"]
+    gender = df["Gender"] #.to_numpy(dtype=str)
+    # Unique -> ['0' 'other' 'female' 'male' nan 'unknown']
+    male = gender.where(lambda x: x == "male").fillna(0).replace("male", 1).to_numpy(dtype=int)
+    female = gender.where(lambda x: x == "female").fillna(0).replace("female", 1).to_numpy(dtype=int)
+    other = pd.Series(male + female).replace(1, 2).replace(0, 1).replace(2, 0).to_numpy(dtype=int)
     # age = df.iloc[:, 3]
-    age = df["Age"]
+    age_df = df["Age"]
+    gm_age = int(gmean(age_df.where(lambda x: x > 0).dropna().to_numpy(dtype=int)))
+    age = age_df.where(lambda x: x > 0).fillna(gm_age).to_numpy(dtype=int) / gm_age
     # country = df.iloc[:, 4]
     country = df["Country"]
+    # Unique ->
+    ct = pd.Series(
+        country.replace(
+            "Laos", "LAO").replace(
+            "South Korea", "KOR").replace(
+            "North Korea", "PRK").replace(
+            "DR Congo", "COD").unique()
+    ).apply(pyc.countries.search_fuzzy)
+    # ct = country.replace("Laos", "LAO").replace("South Korea", "KOR").apply(pyc.countries.search_fuzzy)
     # population = df.iloc[:, 5]
     population = df["Size of City"]
+    # Laos -> Lao
+    # North Korea -> KOR
     # job = df.iloc[:, 6]
     job = df["Profession"]
+    # Unique ->
     # degree = df.iloc[:, 8]
     degree = df["University Degree"]
+    # Unique ->
     # glasses = df.iloc[:, 9]
     glasses = df["Wears Glasses"]
+    # Unique ->
     # hair = df.iloc[:, 10]
     hair = df["Hair Color"]
+    # Unique ->
     # height = df.iloc[:, 11]
     height = df["Body Height [cm]"]
+    # Unique ->
 
     # income = df.iloc[:, 12]
     income = df["Income in EUR"]
