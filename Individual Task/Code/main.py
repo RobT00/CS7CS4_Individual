@@ -55,6 +55,7 @@ def process(df):
     l = len(df)
     # instance = df.iloc[:, 0]
     instance = df["Instance"].to_numpy(dtype=int)
+    features_matrix = np.ones([l, 1])
     # plt.figure()
     # plt.scatter(instance, instance)
     # plt.xlabel("Instance")
@@ -69,52 +70,95 @@ def process(df):
     # max_year = max(f_year_record)
     # min_year = min(f_year_record)
     year_geo_mean = int(gmean(f_year_record))
-    year_record = year_record.where(lambda x: x > 0).fillna(year_geo_mean).to_numpy(dtype=int) / year_geo_mean
+    year_record = year_record.where(lambda x: x > 0, year_geo_mean).to_numpy(dtype=int) / year_geo_mean
+    features_matrix = np.append(features_matrix, year_record.reshape(l, 1), axis=1)
     # plt.figure()
     # plt.scatter(year_record, instance)
     # plt.xlabel("Instance")
     # plt.ylabel("Year of Record")
     # plt.show()
     # gender = df.iloc[:, 2]
-    gender = df["Gender"] #.to_numpy(dtype=str)
+    gender = df["Gender"].str.lower() #.to_numpy(dtype=str)
     # Unique -> ['0' 'other' 'female' 'male' nan 'unknown']
-    male = gender.where(lambda x: x.str.lower() == "male").fillna(0).replace("male", 1).to_numpy(dtype=int)
-    female = gender.where(lambda x: x.str.lower() == "female").fillna(0).replace("female", 1).to_numpy(dtype=int)
+    male = gender.where(lambda x: x.str.lower() == "male", 0).replace("male", 1).to_numpy(dtype=int)
+    female = gender.where(lambda x: x.str.lower() == "female", 0).replace("female", 1).to_numpy(dtype=int)
     other = pd.Series(male + female).replace(1, 2).replace(0, 1).replace(2, 0).to_numpy(dtype=int)
-    # np.append(male.reshape(111993, 1), np.append(female.reshape(111993, 1), other.reshape(111993, 1), axis=1), axis=1)
+    features_matrix = np.append(features_matrix, (np.append(male.reshape(111993, 1),
+                                                            np.append(
+                                                                female.reshape(111993, 1),
+                                                                other.reshape(111993, 1), axis=1),
+                                                            axis=1)),
+                                axis=1)
     # age = df.iloc[:, 3]
     age_df = df["Age"]
     gm_age = int(gmean(age_df.where(lambda x: x > 0).dropna().to_numpy(dtype=int)))
-    age = age_df.where(lambda x: x > 0).fillna(gm_age).to_numpy(dtype=int) / gm_age
+    age = age_df.where(lambda x: x > 0, gm_age).to_numpy(dtype=int) / gm_age
+    features_matrix = np.append(features_matrix, age.reshape(l, 1), axis=1)
     # country = df.iloc[:, 4]
-    country = df["Country"]
+    country = df["Country"].str.lower()
     # Unique ->
-    country_df = country.replace(
-            "Laos", "LAO").replace(
-            "South Korea", "KOR").replace(
-            "North Korea", "PRK").replace(
-            "DR Congo", "COD").str.lower().unique()
+    # Laos -> Lao
+    # North Korea -> KOR
+    # country_df = country.replace(
+    #         "Laos", "LAO").replace(
+    #         "South Korea", "KOR").replace(
+    #         "North Korea", "PRK").replace(
+    #         "DR Congo", "COD").unique()
+    country_df = country.unique()
     country_list = sorted(country_df.tolist())
     one_hot_c = np.zeros([l, len(country_df)])
     for i, c in enumerate(country_list):
-        one_hot_c[i, :] = country.where(lambda x: x.str.lower() == c).fillna(0).replace(c, 1).to_numpy(dtype=str)
-    searched_countries = pd.Series(
-        country.replace(
-            "Laos", "LAO").replace(
-            "South Korea", "KOR").replace(
-            "North Korea", "PRK").replace(
-            "DR Congo", "COD").unique()
-    ).apply(pyc.countries.search_fuzzy).tolist()
+        one_hot_c[:, i] = country.where(lambda x: x == c, 0).replace(c, 1).to_numpy(dtype=int)
+    features_matrix = np.append(features_matrix, one_hot_c, axis=1)
+    # searched_countries = pd.Series(
+    #     country.replace(
+    #         "Laos", "LAO").replace(
+    #         "South Korea", "KOR").replace(
+    #         "North Korea", "PRK").replace(
+    #         "DR Congo", "COD").unique()
+    # ).apply(pyc.countries.search_fuzzy).tolist()
     # population = df.iloc[:, 5]
     population = df["Size of City"]
-    # Laos -> Lao
-    # North Korea -> KOR
+    pop_mean = int(gmean(population.where(lambda x: x > 0).dropna().to_numpy(dtype=int)))
+    population = population.where(lambda x: x > 0).fillna(pop_mean).to_numpy(dtype=int) / pop_mean
+    # max_pop = int(population.max())
+    # min_pop = int(population.min())
+    features_matrix = np.append(features_matrix, population.reshape(l, 1), axis=1)
     # job = df.iloc[:, 6]
-    job = df["Profession"]
-    # Unique ->
+    job_series = df["Profession"].str.lower().fillna("other")
+    split_job = pd.Series(job_series.unique()).apply(lambda x: x.split(" ")).tolist()
+    job_adj_set = set()
+    for job_list in split_job:
+        for job in job_list:
+            job_adj_set.add(job)
+    job_adj_list = sorted(list(job_adj_set))
+    one_hot_j = np.zeros([l, len(job_adj_list)])
+    for i, adj in enumerate(job_adj_list):
+        # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
+        one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
+    features_matrix = np.append(features_matrix, one_hot_j, axis=1)
     # degree = df.iloc[:, 8]
-    degree = df["University Degree"]
-    # Unique ->
+    degree = df["University Degree"].str.lower()
+    unq_degree = degree.unique()
+    # Unique -> ['bachelor' 'master' 'phd' 'no' '0' nan]
+    bachelor = gender.where(lambda x: x.str.lower() == "bachelor", 0).replace("bachelor", 1).to_numpy(dtype=int)
+    master = gender.where(lambda x: x.str.lower() == "master", 0).replace("master", 1).to_numpy(dtype=int)
+    phd = gender.where(lambda x: x.str.lower() == "phd", 0).replace("phd", 1).to_numpy(dtype=int)
+    other = pd.Series(bachelor + master + phd).replace(1, 2).replace(0, 1).replace(2, 0).to_numpy(dtype=int)
+    features_matrix = np.append(
+        features_matrix, (
+            np.append(
+                bachelor.reshape(l, 1),
+                np.append(
+                    master.reshape(l, 1),
+                    np.append(
+                        phd.reshape(l, 1),
+                        other.reshape(l, 1),
+                        axis=1),
+                    axis=1)
+            )),
+        axis=1
+    )
     # glasses = df.iloc[:, 9]
     glasses = df["Wears Glasses"]
     # Unique ->
