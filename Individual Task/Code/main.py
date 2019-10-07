@@ -41,8 +41,8 @@ def process(df):
     2. Year of Record -  Year record was made (possibly unimportant) - scale on geo mean
     3. Gender - Participant gender (relevant) - encode -> (male) (female) (other) - "Bad" -> (other)
     4. Age - Age of participant (relevant) - scale on min/max
-    5. Country - Country participant is from/works in (relevant) - use ISO country code ?
-    6. Size of City - Population size (somewhat relevant) - scale from ISO ? Aggregate with country in some way ?
+    5. Country - Country participant is from/works in (relevant) - use ISO country code ? -- one hot encode
+    6. Size of City - Population size (somewhat relevant) - scale from ISO ? Aggregate with country in some way ?  -- encode per 10,000 ?
     7. Profession - Participant job (relevant) - try to categorise (use salary as metric) ?
     8. University Degree - Level of education - encode -> (no) (bachelor) (master) (phd) - "Bad" -> (no)
     9. Wears Glasses - Boolean glasses wearing (possibly unimportant, age correlated ?) - encode (already ?) -> (no) (yes) - "Bad" -> (no)
@@ -78,9 +78,10 @@ def process(df):
     # gender = df.iloc[:, 2]
     gender = df["Gender"] #.to_numpy(dtype=str)
     # Unique -> ['0' 'other' 'female' 'male' nan 'unknown']
-    male = gender.where(lambda x: x == "male").fillna(0).replace("male", 1).to_numpy(dtype=int)
-    female = gender.where(lambda x: x == "female").fillna(0).replace("female", 1).to_numpy(dtype=int)
+    male = gender.where(lambda x: x.str.lower() == "male").fillna(0).replace("male", 1).to_numpy(dtype=int)
+    female = gender.where(lambda x: x.str.lower() == "female").fillna(0).replace("female", 1).to_numpy(dtype=int)
     other = pd.Series(male + female).replace(1, 2).replace(0, 1).replace(2, 0).to_numpy(dtype=int)
+    # np.append(male.reshape(111993, 1), np.append(female.reshape(111993, 1), other.reshape(111993, 1), axis=1), axis=1)
     # age = df.iloc[:, 3]
     age_df = df["Age"]
     gm_age = int(gmean(age_df.where(lambda x: x > 0).dropna().to_numpy(dtype=int)))
@@ -88,14 +89,22 @@ def process(df):
     # country = df.iloc[:, 4]
     country = df["Country"]
     # Unique ->
-    ct = pd.Series(
+    country_df = country.replace(
+            "Laos", "LAO").replace(
+            "South Korea", "KOR").replace(
+            "North Korea", "PRK").replace(
+            "DR Congo", "COD").str.lower().unique()
+    country_list = sorted(country_df.tolist())
+    one_hot_c = np.zeros([l, len(country_df)])
+    for i, c in enumerate(country_list):
+        one_hot_c[i, :] = country.where(lambda x: x.str.lower() == c).fillna(0).replace(c, 1).to_numpy(dtype=str)
+    searched_countries = pd.Series(
         country.replace(
             "Laos", "LAO").replace(
             "South Korea", "KOR").replace(
             "North Korea", "PRK").replace(
             "DR Congo", "COD").unique()
-    ).apply(pyc.countries.search_fuzzy)
-    # ct = country.replace("Laos", "LAO").replace("South Korea", "KOR").apply(pyc.countries.search_fuzzy)
+    ).apply(pyc.countries.search_fuzzy).tolist()
     # population = df.iloc[:, 5]
     population = df["Size of City"]
     # Laos -> Lao
