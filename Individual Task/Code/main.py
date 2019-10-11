@@ -433,12 +433,12 @@ if __name__ == '__main__':
 
     # Write to test file
     test_data["Income"] = y_pred
-    test_data.to_csv(test_file)
+    test_data.to_csv(test_file, index=False)
     # Write to submission file
     os.chdir(data_dir)
     submission_file = shutil.copy(FILES["submission"]["use"], tmp_dir)
     os.chdir(tmp_dir)
-    submission_df = get_data(submission_file, index=False)
+    submission_df = get_data(submission_file)
     submission_df["Income"] = y_pred
     submission_df.to_csv(submission_file, index=False)
     # The coefficients
