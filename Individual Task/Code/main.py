@@ -438,11 +438,12 @@ if __name__ == '__main__':
     os.chdir(data_dir)
     submission_file = shutil.copy(FILES["submission"]["use"], tmp_dir)
     os.chdir(tmp_dir)
-    submission_df = get_data(submission_file)
+    submission_df = get_data(submission_file, index=False)
     submission_df["Income"] = y_pred
-    submission_df.to_csv(submission_file)
+    submission_df.to_csv(submission_file, index=False)
     # The coefficients
     print('Coefficients: \n', re_model.coef_)
+    os.chdir(script_dir)
     # The mean squared error
     # print("Mean squared error: %.2f"
     #       % sk.metrics.mean_squared_error(diabetes_y_test, diabetes_y_pred))
