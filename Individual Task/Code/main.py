@@ -53,7 +53,13 @@ def process_training(df):
     12. Income in EUR - income - leas as is - desired output - remove negative incomes
     :return:
     """
+    # income = df.iloc[:, 12]
+    income = df["Income in EUR"].to_numpy(dtype=float) #.reshape(l, 1)
+    # Remove negative incomes
+    remove_indexes = list(df["Income in EUR"].where(lambda x: x < 0).dropna().index)
+    df = df.drop(df.index[remove_indexes])
     l = len(df)
+    income = df["Income in EUR"].to_numpy(dtype=float).reshape(l, 1)
     stats = dict()
     # instance = df.iloc[:, 0]
     instance = df["Instance"].to_numpy(dtype=int)
@@ -205,8 +211,6 @@ def process_training(df):
     stats.update({"height_mean": gm_height})
     height = height / gm_height
     features_matrix = np.append(features_matrix, height.reshape(l, 1), axis=1)
-    # income = df.iloc[:, 12]
-    income = df["Income in EUR"].to_numpy(dtype=float).reshape(l, 1)
 
     return features_matrix, income, stats
 
@@ -416,7 +420,8 @@ if __name__ == '__main__':
     training_data = get_data(training_file)
     x, y, stats = process_training(training_data)
 
-    re_model = linear_model.LinearRegression()
+    # re_model = linear_model.LinearRegression()
+    re_model = linear_model.Ridge(alpha=1.0, normalize=True)
     re_model.fit(x, y)
 
     os.chdir(data_dir)
@@ -426,6 +431,16 @@ if __name__ == '__main__':
     x_test = process_test(test_data, stats)
     y_pred = re_model.predict(x_test)
 
+    # Write to test file
+    test_data["Income"] = y_pred
+    test_data.to_csv(test_file)
+    # Write to submission file
+    os.chdir(data_dir)
+    submission_file = shutil.copy(FILES["submission"]["use"], tmp_dir)
+    os.chdir(tmp_dir)
+    submission_df = get_data(submission_file)
+    submission_df["Income"] = y_pred
+    submission_df.to_csv(submission_file)
     # The coefficients
     print('Coefficients: \n', re_model.coef_)
     # The mean squared error
