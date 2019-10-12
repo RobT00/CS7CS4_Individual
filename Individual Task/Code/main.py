@@ -4,7 +4,9 @@ import shutil
 import pandas as pd
 import numpy as np
 import sklearn as sk
+from math import sqrt
 from sklearn import linear_model
+from sklearn import model_selection
 import scipy as sp
 from scipy.stats.mstats import gmean
 import matplotlib.pyplot as plt
@@ -54,16 +56,17 @@ def process_training(df):
     :return:
     """
     # income = df.iloc[:, 12]
-    income = df["Income in EUR"].to_numpy(dtype=float) #.reshape(l, 1)
-    # Remove negative incomes
-    remove_indexes = list(df["Income in EUR"].where(lambda x: x < 0).dropna().index)
-    df = df.drop(df.index[remove_indexes])
+    # if remove_negative:
+    #     income = df["Income in EUR"].to_numpy(dtype=float) #.reshape(l, 1)
+    #     # Remove negative incomes
+    #     remove_indexes = list(df["Income in EUR"].where(lambda x: x < 0).dropna().index)
+    #     df = df.drop(df.index[remove_indexes])
     l = len(df)
+    features_matrix = np.ones([l, 1])
     income = df["Income in EUR"].to_numpy(dtype=float).reshape(l, 1)
     stats = dict()
     # instance = df.iloc[:, 0]
     instance = df["Instance"].to_numpy(dtype=int)
-    features_matrix = np.ones([l, 1])
     # plt.figure()
     # plt.scatter(instance, instance)
     # plt.xlabel("Instance")
@@ -240,9 +243,9 @@ def process_test(df, stats):
     :return:
     """
     l = len(df)
+    features_matrix = np.ones([l, 1])
     # instance = df.iloc[:, 0]
     instance = df["Instance"].to_numpy(dtype=int)
-    features_matrix = np.ones([l, 1])
     # plt.figure()
     # plt.scatter(instance, instance)
     # plt.xlabel("Instance")
@@ -400,13 +403,27 @@ def cleanup(return_dir):
     os.chdir(return_dir)
 
 
-if __name__ == '__main__':
+def write_predictions(df, predictions, output_file, data_dir, tmp_dir):
+    # Write to test file
+    df["Income"] = predictions
+    df.to_csv(output_file, index=False)
+    # Write to submission file
+    os.chdir(data_dir)
+    submission_file = shutil.copy(FILES["submission"]["use"], tmp_dir)
+    os.chdir(tmp_dir)
+    submission_df = get_data(submission_file)
+    submission_df["Income"] = predictions
+    submission_df.to_csv(submission_file, index=False)
+
+
+def run(test_size, training=True):
+    print("\nTest size: {}\n".format(test_size))
     script_dir = os.getcwd()
     root_dir = os.path.dirname(script_dir)
     os.chdir(root_dir)
     data_dir = os.path.join(root_dir, "Data")
-    if os.path.exists(data_dir):
-        print(data_dir)
+    # if os.path.exists(data_dir):
+    #     print(data_dir)
     # tmp_dir = tempfile.mkdtemp(dir=root_dir)
 
     tmp_dir = os.path.join(root_dir, "tmp")
@@ -419,44 +436,131 @@ if __name__ == '__main__':
     os.chdir(tmp_dir)
     training_data = get_data(training_file)
     x, y, stats = process_training(training_data)
-
     # re_model = linear_model.LinearRegression()
-    re_model = linear_model.Ridge(alpha=1.0, normalize=True)
-    re_model.fit(x, y)
+    re_model = linear_model.Ridge(alpha=0.1, normalize=False, fit_intercept=False)
 
-    os.chdir(data_dir)
-    test_file = shutil.copy(FILES.get("test"), tmp_dir)
-    os.chdir(tmp_dir)
-    test_data = get_data(test_file)
-    x_test = process_test(test_data, stats)
-    y_pred = re_model.predict(x_test)
+    if training:
+        x_train, x_val, y_train, y_val = model_selection.train_test_split(x, y, test_size=0.2, random_state=1)
 
-    # Write to test file
-    test_data["Income"] = y_pred
-    test_data.to_csv(test_file, index=False)
-    # Write to submission file
-    os.chdir(data_dir)
-    submission_file = shutil.copy(FILES["submission"]["use"], tmp_dir)
-    os.chdir(tmp_dir)
-    submission_df = get_data(submission_file)
-    submission_df["Income"] = y_pred
-    submission_df.to_csv(submission_file, index=False)
-    # The coefficients
-    print('Coefficients: \n', re_model.coef_)
+        # Use training data
+        re_model.fit(x_train, y_train)
+
+        # Use validation data
+        y_val_pred = re_model.predict(x_val)
+
+        # The coefficients
+        print('Coefficients: \n', re_model.coef_)
+        # The mean squared error
+        mse = sk.metrics.mean_squared_error(y_val, y_val_pred)
+        rmse = sqrt(mse)
+        print("Mean squared error: {:,.2f}".format(mse))
+        print("RMSE: {:,.5f}".format(rmse))
+        # Explained variance score: 1 is perfect prediction
+        print('Variance score: %.2f' % sk.metrics.r2_score(y_val, y_val_pred))
+
+        # Plot outputs
+        # plt.figure()
+        # plt.scatter(x_val[:, 4], y_val, color='black')
+        # plt.plot(x_val[:, 4], y_val_pred, color='blue', linewidth=3)
+        #
+        # plt.xticks(())
+        # plt.yticks(())
+        #
+        # plt.show()
+
+    else:
+        # Output test predictions
+        os.chdir(data_dir)
+        test_file = shutil.copy(FILES.get("test"), tmp_dir)
+        os.chdir(tmp_dir)
+
+        # Use training data
+        re_model.fit(x, y)
+
+        test_data = get_data(test_file)
+        x_test = process_test(test_data, stats)
+        y_test_pred = re_model.predict(x_test)
+
+        write_predictions(test_data, y_test_pred, test_file, data_dir, tmp_dir)
+
     os.chdir(script_dir)
-    # The mean squared error
-    # print("Mean squared error: %.2f"
-    #       % sk.metrics.mean_squared_error(diabetes_y_test, diabetes_y_pred))
+    # cleanup(script_dir)
+
+
+if __name__ == '__main__':
+    # test_sizes = np.arange(0, 0.5, 0.005)
+    # for test_size in test_sizes:
+    #     run(test_size, training=True)
+
+    run(0.1, training=False)
+
+    # script_dir = os.getcwd()
+    # root_dir = os.path.dirname(script_dir)
+    # os.chdir(root_dir)
+    # data_dir = os.path.join(root_dir, "Data")
+    # if os.path.exists(data_dir):
+    #     print(data_dir)
+    # # tmp_dir = tempfile.mkdtemp(dir=root_dir)
+    #
+    # tmp_dir = os.path.join(root_dir, "tmp")
+    # if os.path.exists(tmp_dir):
+    #     shutil.rmtree(tmp_dir)
+    # os.makedirs(tmp_dir)
+    #
+    # os.chdir(data_dir)
+    # training_file = shutil.copy(FILES.get("training"), tmp_dir)
+    # os.chdir(tmp_dir)
+    # training_data = get_data(training_file)
+    # x, y, stats = process_training(training_data, remove_negative=True, use_ones=False)
+    #
+    # x_train, x_val, y_train, y_val = model_selection.train_test_split(x, y, test_size=0.3, random_state=1)
+    #
+    # # Use training data
+    # # re_model = linear_model.LinearRegression()
+    # re_model = linear_model.Ridge(alpha=1.0, normalize=True)
+    # re_model.fit(x_train, y_train)
+    #
+    # # Use validation data
+    # y_val_pred = re_model.predict(x_val)
+    #
+    # # The coefficients
+    # print('Coefficients: \n', re_model.coef_)
+    # # The mean squared error
+    # mse = sk.metrics.mean_squared_error(y_val, y_val_pred)
+    # rmse = sqrt(mse)
+    # print("Mean squared error: {:,.2f}".format(mse))
+    # print("RMSE: {:,.5f}".format(rmse))
     # # Explained variance score: 1 is perfect prediction
-    # print('Variance score: %.2f' % r2_score(diabetes_y_test, diabetes_y_pred))
+    # print('Variance score: %.2f' % sk.metrics.r2_score(y_val, y_val_pred))
     #
     # # Plot outputs
-    # plt.scatter(diabetes_X_test, diabetes_y_test, color='black')
-    # plt.plot(diabetes_X_test, diabetes_y_pred, color='blue', linewidth=3)
-
-    # plt.xticks(())
-    # plt.yticks(())
+    # # plt.figure()
+    # # plt.scatter(x_val[:, 4], y_val, color='black')
+    # # plt.plot(x_val[:, 4], y_val_pred, color='blue', linewidth=3)
+    # #
+    # # plt.xticks(())
+    # # plt.yticks(())
+    # #
+    # # plt.show()
     #
-    # plt.show()
-
-    # cleanup(script_dir)
+    # # Output test predictions
+    # # os.chdir(data_dir)
+    # # test_file = shutil.copy(FILES.get("test"), tmp_dir)
+    # # os.chdir(tmp_dir)
+    # # test_data = get_data(test_file)
+    # # x_test = process_test(test_data, stats, use_ones=True)
+    # # y_test_pred = re_model.predict(x_test)
+    # #
+    # # # Write to test file
+    # # test_data["Income"] = y_test_pred
+    # # test_data.to_csv(test_file, index=False)
+    # # # Write to submission file
+    # # os.chdir(data_dir)
+    # # submission_file = shutil.copy(FILES["submission"]["use"], tmp_dir)
+    # # os.chdir(tmp_dir)
+    # # submission_df = get_data(submission_file)
+    # # submission_df["Income"] = y_test_pred
+    # # submission_df.to_csv(submission_file, index=False)
+    #
+    # os.chdir(script_dir)
+    # # cleanup(script_dir)
