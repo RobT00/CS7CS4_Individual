@@ -7,7 +7,8 @@ import sklearn as sk
 from math import sqrt
 from sklearn import linear_model
 from sklearn import model_selection
-import scipy as sp
+from sklearn.feature_extraction import FeatureHasher
+import scipy
 from scipy.stats.mstats import gmean
 import matplotlib.pyplot as plt
 import pycountry as pyc
@@ -61,10 +62,15 @@ def process_training(df):
     #     # Remove negative incomes
     #     remove_indexes = list(df["Income in EUR"].where(lambda x: x < 0).dropna().index)
     #     df = df.drop(df.index[remove_indexes])
+    df = df[np.abs(scipy.stats.zscore(df["Income in EUR"])) < 1.8]
+    # df = df[np.abs(scipy.stats.zscore(df["Age"].where(lambda x: x > 0).dropna())) < 1.5]
     l = len(df)
+    df_stats = df.describe(include="all")
     features_matrix = np.ones([l, 1])
-    income = df["Income in EUR"].to_numpy(dtype=float).reshape(l, 1)
     stats = dict()
+
+    income = df["Income in EUR"].to_numpy(dtype=float).reshape(l, 1)
+
     # instance = df.iloc[:, 0]
     instance = df["Instance"].to_numpy(dtype=int)
     # plt.figure()
@@ -72,6 +78,7 @@ def process_training(df):
     # plt.xlabel("Instance")
     # plt.ylabel("Instance")
     # plt.show()
+
     # year_record = df.iloc[:, 1]
     year_record = df["Year of Record"].to_numpy(dtype=int)
     # Unique ->
@@ -89,6 +96,7 @@ def process_training(df):
     # plt.xlabel("Instance")
     # plt.ylabel("Year of Record")
     # plt.show()
+
     # gender = df.iloc[:, 2]
     gender = df["Gender"].str.lower() #.to_numpy(dtype=str)
     # Unique -> ['0' 'other' 'female' 'male' nan 'unknown']
@@ -105,12 +113,14 @@ def process_training(df):
             axis=1)),
         axis=1
     )
+
     # age = df.iloc[:, 3]
     age_df = df["Age"]
     gm_age = int(gmean(age_df.where(lambda x: x > 0).dropna().to_numpy(dtype=int)))
     stats.update({"age_mean": gm_age})
     age = age_df.where(lambda x: x > 0, gm_age).to_numpy(dtype=int) / gm_age
     features_matrix = np.append(features_matrix, age.reshape(l, 1), axis=1)
+
     # country = df.iloc[:, 4]
     country = df["Country"].str.lower()
     # Unique ->
@@ -135,6 +145,7 @@ def process_training(df):
     #         "North Korea", "PRK").replace(
     #         "DR Congo", "COD").unique()
     # ).apply(pyc.countries.search_fuzzy).tolist()
+
     # population = df.iloc[:, 5]
     population = df["Size of City"]
     pop_mean = int(gmean(population.where(lambda x: x > 0).dropna().to_numpy(dtype=int)))
@@ -143,21 +154,29 @@ def process_training(df):
     # max_pop = int(population.max())
     # min_pop = int(population.min())
     features_matrix = np.append(features_matrix, population.reshape(l, 1), axis=1)
+
     # job = df.iloc[:, 6]
     job_series = df["Profession"].str.lower().fillna("other")
-    split_job = pd.Series(job_series.unique()).apply(lambda x: x.split(" ")).tolist()
-    job_adj_set = set()
-    for job_list in split_job:
-        for job in job_list:
-            job_adj_set.add(job)
-    job_adj_list = sorted(list(job_adj_set))
-    stats.update({"job_list": job_adj_list})
-    one_hot_j = np.zeros([l, len(job_adj_list)])
-    for i, adj in enumerate(job_adj_list):
-        # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
-        # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
-        one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
-    features_matrix = np.append(features_matrix, one_hot_j, axis=1)
+    # hashed_jobs = sk.feature_extraction.FeatureHasher(
+    #     n_features=int(1.5 * len(job_series.unique())), input_type="string"
+    # ).transform(job_series).toarray()
+    # features_matrix = np.append(features_matrix, hashed_jobs, axis=1)
+    pandas_categories = job_series.astype("category").cat.codes.to_numpy().reshape([l, 1])
+    features_matrix = np.append(features_matrix, pandas_categories, axis=1)
+    # split_job = pd.Series(job_series.unique()).apply(lambda x: x.split(" ")).tolist()
+    # job_adj_set = set()
+    # for job_list in split_job:
+    #     for job in job_list:
+    #         job_adj_set.add(job)
+    # job_adj_list = sorted(list(job_adj_set))
+    # stats.update({"job_list": job_adj_list})
+    # one_hot_j = np.zeros([l, len(job_adj_list)])
+    # for i, adj in enumerate(job_adj_list):
+    #     # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
+    #     # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
+    #     one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
+    # features_matrix = np.append(features_matrix, one_hot_j, axis=1)
+
     # degree = df.iloc[:, 8]
     degree = df["University Degree"].str.lower()
     unq_degree = degree.unique()
@@ -179,34 +198,37 @@ def process_training(df):
                 axis=1)),
         axis=1
     )
+
     # glasses = df.iloc[:, 9]
     glasses = df["Wears Glasses"].to_numpy(dtype=int)
     # Unique -> [0 1]
     features_matrix = np.append(features_matrix, glasses.reshape(l, 1), axis=1)
-    # hair = df.iloc[:, 10]
-    hair = df["Hair Color"].str.lower()
-    # Unique -> ['Blond' 'Black' 'Brown' nan 'Red' 'Unknown' '0']
-    blond = hair.where(lambda x: x.str.lower() == "blond", 0).replace("blond", 1).to_numpy(dtype=int)
-    black = hair.where(lambda x: x.str.lower() == "black", 0).replace("black", 1).to_numpy(dtype=int)
-    brown = hair.where(lambda x: x.str.lower() == "brown", 0).replace("brown", 1).to_numpy(dtype=int)
-    red = hair.where(lambda x: x.str.lower() == "red", 0).replace("red", 1).to_numpy(dtype=int)
-    other = pd.Series(blond + black + brown + red).replace(1, 2).replace(0, 1).replace(2, 0).to_numpy(dtype=int)
-    features_matrix = np.append(
-        features_matrix, (np.append(
-                blond.reshape(l, 1),
-                np.append(
-                    black.reshape(l, 1),
-                    np.append(
-                        brown.reshape(l, 1),
-                        np.append(
-                            red.reshape(l, 1),
-                            other.reshape(l, 1),
-                            axis=1),
-                        axis=1),
-                    axis=1),
-                axis=1)),
-        axis=1
-    )
+
+    # # hair = df.iloc[:, 10]
+    # hair = df["Hair Color"].str.lower()
+    # # Unique -> ['Blond' 'Black' 'Brown' nan 'Red' 'Unknown' '0']
+    # blond = hair.where(lambda x: x.str.lower() == "blond", 0).replace("blond", 1).to_numpy(dtype=int)
+    # black = hair.where(lambda x: x.str.lower() == "black", 0).replace("black", 1).to_numpy(dtype=int)
+    # brown = hair.where(lambda x: x.str.lower() == "brown", 0).replace("brown", 1).to_numpy(dtype=int)
+    # red = hair.where(lambda x: x.str.lower() == "red", 0).replace("red", 1).to_numpy(dtype=int)
+    # other = pd.Series(blond + black + brown + red).replace(1, 2).replace(0, 1).replace(2, 0).to_numpy(dtype=int)
+    # features_matrix = np.append(
+    #     features_matrix, (np.append(
+    #             blond.reshape(l, 1),
+    #             np.append(
+    #                 black.reshape(l, 1),
+    #                 np.append(
+    #                     brown.reshape(l, 1),
+    #                     np.append(
+    #                         red.reshape(l, 1),
+    #                         other.reshape(l, 1),
+    #                         axis=1),
+    #                     axis=1),
+    #                 axis=1),
+    #             axis=1)),
+    #     axis=1
+    # )
+
     # height = df.iloc[:, 11]
     height = df["Body Height [cm]"].to_numpy(dtype=int)
     # Unique ->
@@ -244,6 +266,7 @@ def process_test(df, stats):
     """
     l = len(df)
     features_matrix = np.ones([l, 1])
+
     # instance = df.iloc[:, 0]
     instance = df["Instance"].to_numpy(dtype=int)
     # plt.figure()
@@ -251,6 +274,7 @@ def process_test(df, stats):
     # plt.xlabel("Instance")
     # plt.ylabel("Instance")
     # plt.show()
+
     # year_record = df.iloc[:, 1]
     year_record = df["Year of Record"].to_numpy(dtype=int)
     # Unique ->
@@ -267,6 +291,7 @@ def process_test(df, stats):
     # plt.xlabel("Instance")
     # plt.ylabel("Year of Record")
     # plt.show()
+
     # gender = df.iloc[:, 2]
     gender = df["Gender"].str.lower() #.to_numpy(dtype=str)
     # Unique -> ['0' 'other' 'female' 'male' nan 'unknown']
@@ -283,21 +308,23 @@ def process_test(df, stats):
             axis=1)),
         axis=1
     )
+
     # age = df.iloc[:, 3]
     age_df = df["Age"]
     gm_age = stats["age_mean"]
     age = age_df.where(lambda x: x > 0, gm_age).to_numpy(dtype=int) / gm_age
     features_matrix = np.append(features_matrix, age.reshape(l, 1), axis=1)
+
     # country = df.iloc[:, 4]
     country = df["Country"].str.lower()
     # Unique ->
     # Laos -> Lao
     # North Korea -> KOR
     # country_df = country.replace(
-    #         "Laos", "LAO").replace(
-    #         "South Korea", "KOR").replace(
-    #         "North Korea", "PRK").replace(
-    #         "DR Congo", "COD").unique()
+    #     #         "Laos", "LAO").replace(
+    #     #         "South Korea", "KOR").replace(
+    #     #         "North Korea", "PRK").replace(
+    #     #         "DR Congo", "COD").unique()
     # country_df = country.unique()
     country_list = stats["country_list"]
     one_hot_c = np.zeros([l, len(country_list)])
@@ -311,6 +338,7 @@ def process_test(df, stats):
     #         "North Korea", "PRK").replace(
     #         "DR Congo", "COD").unique()
     # ).apply(pyc.countries.search_fuzzy).tolist()
+
     # population = df.iloc[:, 5]
     population = df["Size of City"]
     pop_mean = stats["pop_mean"]
@@ -318,6 +346,7 @@ def process_test(df, stats):
     # max_pop = int(population.max())
     # min_pop = int(population.min())
     features_matrix = np.append(features_matrix, population.reshape(l, 1), axis=1)
+
     # job = df.iloc[:, 6]
     job_series = df["Profession"].str.lower().fillna("other")
     # split_job = pd.Series(job_series.unique()).apply(lambda x: x.split(" ")).tolist()
@@ -326,13 +355,16 @@ def process_test(df, stats):
     #     for job in job_list:
     #         job_adj_set.add(job)
     # job_adj_list = sorted(list(job_adj_set))
-    job_adj_list = stats["job_list"]
-    one_hot_j = np.zeros([l, len(job_adj_list)])
-    for i, adj in enumerate(job_adj_list):
-        # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
-        # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
-        one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
-    features_matrix = np.append(features_matrix, one_hot_j, axis=1)
+    pandas_categories = job_series.astype("category").cat.codes.to_numpy().reshape([l, 1])
+    features_matrix = np.append(features_matrix, pandas_categories, axis=1)
+    # job_adj_list = stats["job_list"]
+    # one_hot_j = np.zeros([l, len(job_adj_list)])
+    # for i, adj in enumerate(job_adj_list):
+    #     # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
+    #     # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
+    #     one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
+    # features_matrix = np.append(features_matrix, one_hot_j, axis=1)
+
     # degree = df.iloc[:, 8]
     degree = df["University Degree"].str.lower()
     unq_degree = degree.unique()
@@ -354,47 +386,51 @@ def process_test(df, stats):
                 axis=1)),
         axis=1
     )
+
     # glasses = df.iloc[:, 9]
     glasses = df["Wears Glasses"].to_numpy(dtype=int)
     # Unique -> [0 1]
     features_matrix = np.append(features_matrix, glasses.reshape(l, 1), axis=1)
-    # hair = df.iloc[:, 10]
-    hair = df["Hair Color"].str.lower()
-    # Unique -> ['Blond' 'Black' 'Brown' nan 'Red' 'Unknown' '0']
-    blond = hair.where(lambda x: x.str.lower() == "blond", 0).replace("blond", 1).to_numpy(dtype=int)
-    black = hair.where(lambda x: x.str.lower() == "black", 0).replace("black", 1).to_numpy(dtype=int)
-    brown = hair.where(lambda x: x.str.lower() == "brown", 0).replace("brown", 1).to_numpy(dtype=int)
-    red = hair.where(lambda x: x.str.lower() == "red", 0).replace("red", 1).to_numpy(dtype=int)
-    other = pd.Series(blond + black + brown + red).replace(1, 2).replace(0, 1).replace(2, 0).to_numpy(dtype=int)
-    features_matrix = np.append(
-        features_matrix, (np.append(
-                blond.reshape(l, 1),
-                np.append(
-                    black.reshape(l, 1),
-                    np.append(
-                        brown.reshape(l, 1),
-                        np.append(
-                            red.reshape(l, 1),
-                            other.reshape(l, 1),
-                            axis=1),
-                        axis=1),
-                    axis=1),
-                axis=1)),
-        axis=1
-    )
+
+    # # hair = df.iloc[:, 10]
+    # hair = df["Hair Color"].str.lower()
+    # # Unique -> ['Blond' 'Black' 'Brown' nan 'Red' 'Unknown' '0']
+    # blond = hair.where(lambda x: x.str.lower() == "blond", 0).replace("blond", 1).to_numpy(dtype=int)
+    # black = hair.where(lambda x: x.str.lower() == "black", 0).replace("black", 1).to_numpy(dtype=int)
+    # brown = hair.where(lambda x: x.str.lower() == "brown", 0).replace("brown", 1).to_numpy(dtype=int)
+    # red = hair.where(lambda x: x.str.lower() == "red", 0).replace("red", 1).to_numpy(dtype=int)
+    # other = pd.Series(blond + black + brown + red).replace(1, 2).replace(0, 1).replace(2, 0).to_numpy(dtype=int)
+    # features_matrix = np.append(
+    #     features_matrix, (np.append(
+    #             blond.reshape(l, 1),
+    #             np.append(
+    #                 black.reshape(l, 1),
+    #                 np.append(
+    #                     brown.reshape(l, 1),
+    #                     np.append(
+    #                         red.reshape(l, 1),
+    #                         other.reshape(l, 1),
+    #                         axis=1),
+    #                     axis=1),
+    #                 axis=1),
+    #             axis=1)),
+    #     axis=1
+    # )
+
     # height = df.iloc[:, 11]
     height = df["Body Height [cm]"].to_numpy(dtype=int)
     # Unique ->
     gm_height = stats["height_mean"]
     height = height / gm_height
     features_matrix = np.append(features_matrix, height.reshape(l, 1), axis=1)
+
     # income = df.iloc[:, 12]
     # income = df["Income in EUR"].to_numpy(dtype=float).reshape(l, 1)
 
     return features_matrix
 
 
-def cleanup(return_dir):
+def cleanup(return_dir, tmp_dir):
     cwd = os.getcwd()
     os.chdir(return_dir)
     shutil.rmtree(cwd)
@@ -404,6 +440,7 @@ def cleanup(return_dir):
 
 
 def write_predictions(df, predictions, output_file, data_dir, tmp_dir):
+    print(pd.DataFrame(predictions).describe())
     # Write to test file
     df["Income"] = predictions
     df.to_csv(output_file, index=False)
@@ -448,6 +485,8 @@ def run(test_size, training=True):
         # Use validation data
         y_val_pred = re_model.predict(x_val)
 
+        # Prediction stats
+        print(pd.DataFrame(y_val_pred).describe())
         # The coefficients
         print('Coefficients: \n', re_model.coef_)
         # The mean squared error
@@ -484,7 +523,7 @@ def run(test_size, training=True):
         write_predictions(test_data, y_test_pred, test_file, data_dir, tmp_dir)
 
     os.chdir(script_dir)
-    # cleanup(script_dir)
+    # cleanup(script_dir, tmp_dir)
 
 
 if __name__ == '__main__':
@@ -492,7 +531,7 @@ if __name__ == '__main__':
     # for test_size in test_sizes:
     #     run(test_size, training=True)
 
-    run(0.1, training=False)
+    run(0.1, training=True)
 
     # script_dir = os.getcwd()
     # root_dir = os.path.dirname(script_dir)
