@@ -7,11 +7,12 @@ import sklearn as sk
 from math import sqrt
 from sklearn import linear_model
 from sklearn import model_selection
+import seaborn as sns
 from sklearn.feature_extraction import FeatureHasher
 import scipy
+from sklearn.preprocessing import PolynomialFeatures
 from scipy.stats.mstats import gmean
 import matplotlib.pyplot as plt
-import pycountry as pyc
 
 FILE_FORMAT = "csv"
 
@@ -89,20 +90,20 @@ def process_training(df):
     # min_year = min(f_year_record)
     year_geo_mean = int(gmean(f_year_record))
     stats.update({"year_mean": year_geo_mean})
-    year_record = year_record.where(lambda x: x > 0, year_geo_mean).to_numpy(dtype=int) / year_geo_mean
-    features_matrix = np.append(features_matrix, year_record.reshape(l, 1), axis=1)
-    # plt.figure()
-    # plt.scatter(year_record, instance)
-    # plt.xlabel("Instance")
-    # plt.ylabel("Year of Record")
-    # plt.show()
+    year_record = year_record.where(lambda x: x > 0, year_geo_mean).to_numpy(dtype=int)
+    year_record_scaled = year_record / year_geo_mean
+    features_matrix = np.append(features_matrix, year_record_scaled.reshape(l, 1), axis=1)
+    plot_relations(year_record, income, "Year of Record")
 
     # gender = df.iloc[:, 2]
     gender = df["Gender"].str.lower() #.to_numpy(dtype=str)
     # Unique -> ['0' 'other' 'female' 'male' nan 'unknown']
     male = gender.where(lambda x: x.str.lower() == "male", 0).replace("male", 1).to_numpy(dtype=int)
+    plot_relations(male, income, "Male")
     female = gender.where(lambda x: x.str.lower() == "female", 0).replace("female", 1).to_numpy(dtype=int)
+    plot_relations(female, income, "Female")
     other = pd.Series(male + female).replace(1, 2).replace(0, 1).replace(2, 0).to_numpy(dtype=int)
+    plot_relations(other, income, "Other Gender")
     features_matrix = np.append(
         features_matrix, (np.append(
             male.reshape(l, 1),
@@ -116,13 +117,15 @@ def process_training(df):
 
     # age = df.iloc[:, 3]
     age_df = df["Age"]
-    # filtered_age = age_df.where(lambda x: x > 0).dropna().to_numpy(dtype=int)
-    filtered_age = df[np.abs(
-        scipy.stats.zscore(age_df.dropna().astype("int"))) < 1.5].to_numpy(dtype=int)
+    filtered_age = age_df.where(lambda x: x > 0).dropna().to_numpy(dtype=int)
+    # filtered_age = df[np.abs(
+    #     scipy.stats.zscore(age_df.dropna().astype("int"))) < 1.5].to_numpy(dtype=int)
     gm_age = int(gmean(filtered_age))
     stats.update({"age_mean": gm_age})
-    age = age_df.where(lambda x: x > 0, gm_age).to_numpy(dtype=int) / gm_age
-    features_matrix = np.append(features_matrix, age.reshape(l, 1), axis=1)
+    age = age_df.where(lambda x: x > 0, gm_age).to_numpy(dtype=int)
+    age_scaled = age / gm_age
+    features_matrix = np.append(features_matrix, age_scaled.reshape(l, 1), axis=1)
+    plot_relations(age, income, "Age")
 
     # country = df.iloc[:, 4]
     country = df["Country"].str.lower()
@@ -164,21 +167,22 @@ def process_training(df):
     #     n_features=int(1.5 * len(job_series.unique())), input_type="string"
     # ).transform(job_series).toarray()
     # features_matrix = np.append(features_matrix, hashed_jobs, axis=1)
-    pandas_categories = job_series.astype("category").cat.codes.to_numpy().reshape([l, 1])
-    features_matrix = np.append(features_matrix, pandas_categories, axis=1)
-    # split_job = pd.Series(job_series.unique()).apply(lambda x: x.split(" ")).tolist()
-    # job_adj_set = set()
-    # for job_list in split_job:
-    #     for job in job_list:
-    #         job_adj_set.add(job)
-    # job_adj_list = sorted(list(job_adj_set))
-    # stats.update({"job_list": job_adj_list})
-    # one_hot_j = np.zeros([l, len(job_adj_list)])
-    # for i, adj in enumerate(job_adj_list):
-    #     # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
-    #     # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
-    #     one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
-    # features_matrix = np.append(features_matrix, one_hot_j, axis=1)
+    # pandas_categories = job_series.astype("category").cat.codes.to_numpy().reshape([l, 1])
+    # features_matrix = np.append(features_matrix, pandas_categories, axis=1)
+    split_job = pd.Series(job_series.unique()).apply(lambda x: x.split(" ")).tolist()
+    job_adj_set = set()
+    for job_list in split_job:
+        for job in job_list:
+            if len(job) > 2:
+                job_adj_set.add(job)
+    job_adj_list = sorted(list(job_adj_set))
+    stats.update({"job_list": job_adj_list})
+    one_hot_j = np.zeros([l, len(job_adj_list)])
+    for i, adj in enumerate(job_adj_list):
+        # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
+        # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
+        one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
+    features_matrix = np.append(features_matrix, one_hot_j, axis=1)
 
     # degree = df.iloc[:, 8]
     degree = df["University Degree"].str.lower()
@@ -358,15 +362,15 @@ def process_test(df, stats):
     #     for job in job_list:
     #         job_adj_set.add(job)
     # job_adj_list = sorted(list(job_adj_set))
-    pandas_categories = job_series.astype("category").cat.codes.to_numpy().reshape([l, 1])
-    features_matrix = np.append(features_matrix, pandas_categories, axis=1)
-    # job_adj_list = stats["job_list"]
-    # one_hot_j = np.zeros([l, len(job_adj_list)])
-    # for i, adj in enumerate(job_adj_list):
-    #     # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
-    #     # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
-    #     one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
-    # features_matrix = np.append(features_matrix, one_hot_j, axis=1)
+    # pandas_categories = job_series.astype("category").cat.codes.to_numpy().reshape([l, 1])
+    # features_matrix = np.append(features_matrix, pandas_categories, axis=1)
+    job_adj_list = stats["job_list"]
+    one_hot_j = np.zeros([l, len(job_adj_list)])
+    for i, adj in enumerate(job_adj_list):
+        # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
+        # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
+        one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
+    features_matrix = np.append(features_matrix, one_hot_j, axis=1)
 
     # degree = df.iloc[:, 8]
     degree = df["University Degree"].str.lower()
@@ -476,8 +480,12 @@ def run(test_size, training=True):
     os.chdir(tmp_dir)
     training_data = get_data(training_file)
     x, y, stats = process_training(training_data)
+    # poly = PolynomialFeatures(degree=2)
+    # X_ = poly.fit_transform(x)
     # re_model = linear_model.LinearRegression()
     re_model = linear_model.Ridge(alpha=0.1, normalize=False, fit_intercept=False)
+    # re_model = linear_model.Lasso()
+    # re_model = linear_model.RidgeCV(fit_intercept=False)
 
     if training:
         x_train, x_val, y_train, y_val = model_selection.train_test_split(x, y, test_size=0.2, random_state=1)
@@ -487,6 +495,10 @@ def run(test_size, training=True):
 
         # Use validation data
         y_val_pred = re_model.predict(x_val)
+
+        pred_df = pd.DataFrame({"Val": y_val.flatten(),
+                                "Pred": y_val_pred.flatten(),
+                                "Diff": abs(y_val - y_val_pred).flatten()})
 
         # Prediction stats
         print(pd.DataFrame(y_val_pred).describe())
@@ -540,6 +552,15 @@ def feature_correlations(test_df, correlation_feature="Income in EUR"):
     print(correlations)
 
     return correlations
+
+
+def plot_relations(x, y, x_label, y_label="Income"):
+    plt.figure()
+    x, y = list(zip(*sorted(list(zip(x, y.flatten())), key=lambda x: x[0])))
+    plt.scatter(x, y)
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.show()
 
 
 if __name__ == '__main__':
