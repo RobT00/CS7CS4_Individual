@@ -62,7 +62,7 @@ def process_training(df):
     #     # Remove negative incomes
     #     remove_indexes = list(df["Income in EUR"].where(lambda x: x < 0).dropna().index)
     #     df = df.drop(df.index[remove_indexes])
-    df = df[np.abs(scipy.stats.zscore(df["Income in EUR"])) < 1.8]
+    # df = df[np.abs(scipy.stats.zscore(df["Income in EUR"])) < 1.8]
     # df = df[np.abs(scipy.stats.zscore(df["Age"].where(lambda x: x > 0).dropna())) < 1.5]
     l = len(df)
     df_stats = df.describe(include="all")
@@ -116,7 +116,10 @@ def process_training(df):
 
     # age = df.iloc[:, 3]
     age_df = df["Age"]
-    gm_age = int(gmean(age_df.where(lambda x: x > 0).dropna().to_numpy(dtype=int)))
+    # filtered_age = age_df.where(lambda x: x > 0).dropna().to_numpy(dtype=int)
+    filtered_age = df[np.abs(
+        scipy.stats.zscore(age_df.dropna().astype("int"))) < 1.5].to_numpy(dtype=int)
+    gm_age = int(gmean(filtered_age))
     stats.update({"age_mean": gm_age})
     age = age_df.where(lambda x: x > 0, gm_age).to_numpy(dtype=int) / gm_age
     features_matrix = np.append(features_matrix, age.reshape(l, 1), axis=1)
@@ -524,6 +527,19 @@ def run(test_size, training=True):
 
     os.chdir(script_dir)
     # cleanup(script_dir, tmp_dir)
+
+
+def feature_correlations(test_df, correlation_feature="Income in EUR"):
+    df = test_df.copy()
+    columns = list(df.columns.values)
+    for column in columns:
+        if column != correlation_feature:
+            df[column] = df[column].astype("category").cat.codes
+
+    correlations = df[df.columns[1:]].corr()[correlation_feature][:]
+    print(correlations)
+
+    return correlations
 
 
 if __name__ == '__main__':
