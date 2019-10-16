@@ -3,16 +3,21 @@ import tempfile
 import shutil
 import pandas as pd
 import numpy as np
+import datetime
+from timeit import default_timer as timer
 import sklearn as sk
 from math import sqrt
+from sklearn import preprocessing
 from sklearn import linear_model
 from sklearn import model_selection
+from sklearn.ensemble import RandomForestRegressor
 import seaborn as sns
 from sklearn.feature_extraction import FeatureHasher
 import scipy
 from sklearn.preprocessing import PolynomialFeatures
 from scipy.stats.mstats import gmean
 import matplotlib.pyplot as plt
+from catboost import CatBoostRegressor
 
 FILE_FORMAT = "csv"
 
@@ -33,7 +38,7 @@ def get_data(path):
     return data
 
 
-def process_training(df):
+def process_training(df, training):
     """
     To manipulate the training data
     :param df: pandas dataframe
@@ -63,7 +68,9 @@ def process_training(df):
     #     # Remove negative incomes
     #     remove_indexes = list(df["Income in EUR"].where(lambda x: x < 0).dropna().index)
     #     df = df.drop(df.index[remove_indexes])
-    # df = df[np.abs(scipy.stats.zscore(df["Income in EUR"])) < 1.8]
+    # df = df[np.abs(scipy.stats.zscore(df["Income in EUR"])) < 2.7]
+    # df = df[df["Income in EUR"] < 300000]
+    # df = df[df["Age"] < 90]
     # df = df[np.abs(scipy.stats.zscore(df["Age"].where(lambda x: x > 0).dropna())) < 1.5]
     l = len(df)
     df_stats = df.describe(include="all")
@@ -93,17 +100,15 @@ def process_training(df):
     year_record = year_record.where(lambda x: x > 0, year_geo_mean).to_numpy(dtype=int)
     year_record_scaled = year_record / year_geo_mean
     features_matrix = np.append(features_matrix, year_record_scaled.reshape(l, 1), axis=1)
-    plot_relations(year_record, income, "Year of Record")
+    # if training:
+    #     plot_relations(year_record, income, "Year of Record")
 
     # gender = df.iloc[:, 2]
     gender = df["Gender"].str.lower() #.to_numpy(dtype=str)
     # Unique -> ['0' 'other' 'female' 'male' nan 'unknown']
     male = gender.where(lambda x: x.str.lower() == "male", 0).replace("male", 1).to_numpy(dtype=int)
-    plot_relations(male, income, "Male")
     female = gender.where(lambda x: x.str.lower() == "female", 0).replace("female", 1).to_numpy(dtype=int)
-    plot_relations(female, income, "Female")
     other = pd.Series(male + female).replace(1, 2).replace(0, 1).replace(2, 0).to_numpy(dtype=int)
-    plot_relations(other, income, "Other Gender")
     features_matrix = np.append(
         features_matrix, (np.append(
             male.reshape(l, 1),
@@ -114,6 +119,10 @@ def process_training(df):
             axis=1)),
         axis=1
     )
+    # if training:
+    #     plot_relations(male, income, "Male")
+    #     plot_relations(female, income, "Female")
+    #     plot_relations(other, income, "Other Gender")
 
     # age = df.iloc[:, 3]
     age_df = df["Age"]
@@ -125,18 +134,20 @@ def process_training(df):
     age = age_df.where(lambda x: x > 0, gm_age).to_numpy(dtype=int)
     age_scaled = age / gm_age
     features_matrix = np.append(features_matrix, age_scaled.reshape(l, 1), axis=1)
-    plot_relations(age, income, "Age")
+    # if training:
+    #     plot_relations(age, income, "Age")
 
     # country = df.iloc[:, 4]
     country = df["Country"].str.lower()
-    # Unique ->
-    # Laos -> Lao
-    # North Korea -> KOR
-    # country_df = country.replace(
-    #         "Laos", "LAO").replace(
-    #         "South Korea", "KOR").replace(
-    #         "North Korea", "PRK").replace(
-    #         "DR Congo", "COD").unique()
+    # country_count_df = pd.DataFrame({"Country": country.value_counts().index, "Count": country.value_counts()})
+    # top_countries = country_count_df["Country"][:100].tolist()
+    # for i, c in enumerate(country):
+    #     if any(x == c for x in top_countries):
+    #         pass
+    #     else:
+    #         country[i] = "other"
+    # hashed_countries = country.astype("category").cat.codes.to_numpy()
+    # features_matrix = np.append(features_matrix, hashed_countries.reshape([l, 1]), axis=1)
     country_df = country.unique()
     country_list = sorted(country_df.tolist())
     stats.update({"country_list": country_list})
@@ -144,13 +155,6 @@ def process_training(df):
     for i, c in enumerate(country_list):
         one_hot_c[:, i] = country.where(lambda x: x == c, 0).replace(c, 1).to_numpy(dtype=int)
     features_matrix = np.append(features_matrix, one_hot_c, axis=1)
-    # searched_countries = pd.Series(
-    #     country.replace(
-    #         "Laos", "LAO").replace(
-    #         "South Korea", "KOR").replace(
-    #         "North Korea", "PRK").replace(
-    #         "DR Congo", "COD").unique()
-    # ).apply(pyc.countries.search_fuzzy).tolist()
 
     # population = df.iloc[:, 5]
     population = df["Size of City"]
@@ -169,24 +173,30 @@ def process_training(df):
     # features_matrix = np.append(features_matrix, hashed_jobs, axis=1)
     # pandas_categories = job_series.astype("category").cat.codes.to_numpy().reshape([l, 1])
     # features_matrix = np.append(features_matrix, pandas_categories, axis=1)
-    split_job = pd.Series(job_series.unique()).apply(lambda x: x.split(" ")).tolist()
-    job_adj_set = set()
-    for job_list in split_job:
-        for job in job_list:
-            if len(job) > 2:
-                job_adj_set.add(job)
-    job_adj_list = sorted(list(job_adj_set))
-    stats.update({"job_list": job_adj_list})
-    one_hot_j = np.zeros([l, len(job_adj_list)])
-    for i, adj in enumerate(job_adj_list):
-        # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
-        # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
-        one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
-    features_matrix = np.append(features_matrix, one_hot_j, axis=1)
+    le = preprocessing.LabelEncoder()
+    stats.update({"job_encoder": le})
+    encoded = le.fit_transform(job_series.tolist())
+    features_matrix = np.append(features_matrix, encoded.reshape(l, 1), axis=1)
+    # split_job = pd.Series(job_series.unique()).apply(lambda x: x.split(" ")).tolist()
+    # job_adj_set = set()
+    # for job_list in split_job:
+    #     for job in job_list:
+    #         job_adj_set.add(job)
+    #     # for job in job_list:
+    #     #     if not any(c in job for c in ("and", "the", "&", "an", "-")):
+    #     #         job_adj_set.add(job)
+    # job_adj_list = sorted(list(job_adj_set))
+    # stats.update({"job_list": job_adj_list})
+    # one_hot_j = np.zeros([l, len(job_adj_list)])
+    # for i, adj in enumerate(job_adj_list):
+    #     # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
+    #     # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
+    #     one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
+    # features_matrix = np.append(features_matrix, one_hot_j, axis=1)
 
     # degree = df.iloc[:, 8]
     degree = df["University Degree"].str.lower()
-    unq_degree = degree.unique()
+    # unq_degree = degree.unique()
     # Unique -> ['bachelor' 'master' 'phd' 'no' '0' nan]
     bachelor = degree.where(lambda x: x.str.lower() == "bachelor", 0).replace("bachelor", 1).to_numpy(dtype=int)
     master = degree.where(lambda x: x.str.lower() == "master", 0).replace("master", 1).to_numpy(dtype=int)
@@ -205,6 +215,12 @@ def process_training(df):
                 axis=1)),
         axis=1
     )
+    # bachelor = degree.where(lambda x: x.str.lower() == "bachelor", 0).replace("bachelor", 1).to_numpy(dtype=int)
+    # master = degree.where(lambda x: x.str.lower() == "master", 0).replace("master", 2).to_numpy(dtype=int)
+    # phd = degree.where(lambda x: x.str.lower() == "phd", 0).replace("phd", 3).to_numpy(dtype=int)
+    # degree_encoded = bachelor + master + phd
+    # features_matrix = np.append(features_matrix, degree_encoded.reshape(l, 1), axis=1)
+    # plot_relations(degree_encoded, income, "Education")
 
     # glasses = df.iloc[:, 9]
     glasses = df["Wears Glasses"].to_numpy(dtype=int)
@@ -324,27 +340,11 @@ def process_test(df, stats):
 
     # country = df.iloc[:, 4]
     country = df["Country"].str.lower()
-    # Unique ->
-    # Laos -> Lao
-    # North Korea -> KOR
-    # country_df = country.replace(
-    #     #         "Laos", "LAO").replace(
-    #     #         "South Korea", "KOR").replace(
-    #     #         "North Korea", "PRK").replace(
-    #     #         "DR Congo", "COD").unique()
-    # country_df = country.unique()
     country_list = stats["country_list"]
     one_hot_c = np.zeros([l, len(country_list)])
     for i, c in enumerate(country_list):
         one_hot_c[:, i] = country.where(lambda x: x == c, 0).replace(c, 1).to_numpy(dtype=int)
     features_matrix = np.append(features_matrix, one_hot_c, axis=1)
-    # searched_countries = pd.Series(
-    #     country.replace(
-    #         "Laos", "LAO").replace(
-    #         "South Korea", "KOR").replace(
-    #         "North Korea", "PRK").replace(
-    #         "DR Congo", "COD").unique()
-    # ).apply(pyc.countries.search_fuzzy).tolist()
 
     # population = df.iloc[:, 5]
     population = df["Size of City"]
@@ -364,17 +364,20 @@ def process_test(df, stats):
     # job_adj_list = sorted(list(job_adj_set))
     # pandas_categories = job_series.astype("category").cat.codes.to_numpy().reshape([l, 1])
     # features_matrix = np.append(features_matrix, pandas_categories, axis=1)
-    job_adj_list = stats["job_list"]
-    one_hot_j = np.zeros([l, len(job_adj_list)])
-    for i, adj in enumerate(job_adj_list):
-        # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
-        # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
-        one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
-    features_matrix = np.append(features_matrix, one_hot_j, axis=1)
+    encoder = stats["job_encoder"]
+    encoded = encoder.fit_transform(job_series.tolist())
+    features_matrix = np.append(features_matrix, encoded.reshape(l, 1), axis=1)
+    # job_adj_list = stats["job_list"]
+    # one_hot_j = np.zeros([l, len(job_adj_list)])
+    # for i, adj in enumerate(job_adj_list):
+    #     # one_hot_j[:, i] = job_series.where(lambda x: adj in x).fillna(0)
+    #     # one_hot_j[:, i] = job_series.str.find(adj).replace(0, 1).replace(-1, 0).to_numpy(dtype=int)
+    #     one_hot_j[:, i] = job_series.str.contains(adj).to_numpy(dtype=int)
+    # features_matrix = np.append(features_matrix, one_hot_j, axis=1)
 
     # degree = df.iloc[:, 8]
     degree = df["University Degree"].str.lower()
-    unq_degree = degree.unique()
+    # unq_degree = degree.unique()
     # Unique -> ['bachelor' 'master' 'phd' 'no' '0' nan]
     bachelor = degree.where(lambda x: x.str.lower() == "bachelor", 0).replace("bachelor", 1).to_numpy(dtype=int)
     master = degree.where(lambda x: x.str.lower() == "master", 0).replace("master", 1).to_numpy(dtype=int)
@@ -393,6 +396,11 @@ def process_test(df, stats):
                 axis=1)),
         axis=1
     )
+    # bachelor = degree.where(lambda x: x.str.lower() == "bachelor", 0).replace("bachelor", 1).to_numpy(dtype=int)
+    # master = degree.where(lambda x: x.str.lower() == "master", 0).replace("master", 2).to_numpy(dtype=int)
+    # phd = degree.where(lambda x: x.str.lower() == "phd", 0).replace("phd", 3).to_numpy(dtype=int)
+    # degree_encoded = bachelor + master + phd
+    # features_matrix = np.append(features_matrix, degree_encoded.reshape(l, 1), axis=1)
 
     # glasses = df.iloc[:, 9]
     glasses = df["Wears Glasses"].to_numpy(dtype=int)
@@ -460,8 +468,7 @@ def write_predictions(df, predictions, output_file, data_dir, tmp_dir):
     submission_df.to_csv(submission_file, index=False)
 
 
-def run(test_size, training=True):
-    print("\nTest size: {}\n".format(test_size))
+def run(test_sizes, training=True):
     script_dir = os.getcwd()
     root_dir = os.path.dirname(script_dir)
     os.chdir(root_dir)
@@ -479,65 +486,97 @@ def run(test_size, training=True):
     training_file = shutil.copy(FILES.get("training"), tmp_dir)
     os.chdir(tmp_dir)
     training_data = get_data(training_file)
-    x, y, stats = process_training(training_data)
+    x, y, stats = process_training(training_data, training)
     # poly = PolynomialFeatures(degree=2)
     # X_ = poly.fit_transform(x)
     # re_model = linear_model.LinearRegression()
-    re_model = linear_model.Ridge(alpha=0.1, normalize=False, fit_intercept=False)
+    # re_model = linear_model.Ridge(alpha=0.1, normalize=False, fit_intercept=False, tol=1e-5)
+    # re_model = RandomForestRegressor(n_estimators='warn',
+    #                                  criterion="mse",
+    #                                  max_depth=None,
+    #                                  min_samples_split=2,
+    #                                  min_samples_leaf=1,
+    #                                  min_weight_fraction_leaf=0.,
+    #                                  max_features="auto",
+    #                                  max_leaf_nodes=None,
+    #                                  min_impurity_decrease=0.,
+    #                                  min_impurity_split=None,
+    #                                  bootstrap=True,
+    #                                  oob_score=False,
+    #                                  n_jobs=None,
+    #                                  random_state=None,
+    #                                  verbose=0,
+    #                                  warm_start=False)
+    # results = list()
+    # for test_size in test_sizes:
+    print("\nTest size: {}\n".format(test_sizes))
+    re_model = CatBoostRegressor(learning_rate=0.08, iterations=20000, task_type="GPU", use_best_model=True)
     # re_model = linear_model.Lasso()
     # re_model = linear_model.RidgeCV(fit_intercept=False)
 
-    if training:
-        x_train, x_val, y_train, y_val = model_selection.train_test_split(x, y, test_size=0.2, random_state=1)
+    # if training:
+    x_train, x_val, y_train, y_val = model_selection.train_test_split(x, y, test_size=0.2, random_state=1)
 
-        # Use training data
-        re_model.fit(x_train, y_train)
+    # Use training data
+    print("Training")
+    start = timer()
+    re_model.fit(x_train, y=y_train.flatten(), use_best_model=True, eval_set=(x_val, y_val.flatten()), verbose=10000)
+    end = timer()
+    dur = end - start
+    print("Training took: {}".format(str(datetime.timedelta(seconds=dur))))
+    y_val_pred = re_model.predict(x_val)
+    mse = sk.metrics.mean_squared_error(y_val, y_val_pred)
+    rmse = sqrt(mse)
+    print("RMSE: {:,.5f}".format(rmse))
+    print('Variance score: %.2f' % sk.metrics.r2_score(y_val, y_val_pred))
+    # results.append([re_model.best_score_["validation"]["RMSE"], re_model.learning_rate_, re_model.tree_count_])
+    # Use validation data
 
-        # Use validation data
-        y_val_pred = re_model.predict(x_val)
 
-        pred_df = pd.DataFrame({"Val": y_val.flatten(),
-                                "Pred": y_val_pred.flatten(),
-                                "Diff": abs(y_val - y_val_pred).flatten()})
+    # pred_df = pd.DataFrame({"Val": y_val.flatten(),
+    #                         "Pred": y_val_pred.flatten(),
+    #                         "Diff": abs(y_val - y_val_pred).flatten()})
 
-        # Prediction stats
-        print(pd.DataFrame(y_val_pred).describe())
-        # The coefficients
-        print('Coefficients: \n', re_model.coef_)
-        # The mean squared error
-        mse = sk.metrics.mean_squared_error(y_val, y_val_pred)
-        rmse = sqrt(mse)
-        print("Mean squared error: {:,.2f}".format(mse))
-        print("RMSE: {:,.5f}".format(rmse))
-        # Explained variance score: 1 is perfect prediction
-        print('Variance score: %.2f' % sk.metrics.r2_score(y_val, y_val_pred))
+    # # Prediction stats
+    # # print(pd.DataFrame(y_val_pred).describe())
+    # # The coefficients
+    # # print('Coefficients: \n', re_model.coef_)
+    # # The mean squared error
+    # mse = sk.metrics.mean_squared_error(y_val, y_val_pred)
+    # rmse = sqrt(mse)
+    # print("Mean squared error: {:,.2f}".format(mse))
+    # print("RMSE: {:,.5f}".format(rmse))
+    # # Explained variance score: 1 is perfect prediction
+    # print('Variance score: %.2f' % sk.metrics.r2_score(y_val, y_val_pred))
 
-        # Plot outputs
-        # plt.figure()
-        # plt.scatter(x_val[:, 4], y_val, color='black')
-        # plt.plot(x_val[:, 4], y_val_pred, color='blue', linewidth=3)
-        #
-        # plt.xticks(())
-        # plt.yticks(())
-        #
-        # plt.show()
+    # Plot outputs
+    # plt.figure()
+    # plt.scatter(x_val[:, 4], y_val, color='black')
+    # plt.plot(x_val[:, 4], y_val_pred, color='blue', linewidth=3)
+    #
+    # plt.xticks(())
+    # plt.yticks(())
+    #
+    # plt.show()
 
-    else:
+    # else:
         # Output test predictions
-        os.chdir(data_dir)
-        test_file = shutil.copy(FILES.get("test"), tmp_dir)
-        os.chdir(tmp_dir)
+    os.chdir(data_dir)
+    test_file = shutil.copy(FILES.get("test"), tmp_dir)
+    os.chdir(tmp_dir)
 
         # Use training data
+    if not training:
         re_model.fit(x, y)
 
-        test_data = get_data(test_file)
-        x_test = process_test(test_data, stats)
-        y_test_pred = re_model.predict(x_test)
+    test_data = get_data(test_file)
+    x_test = process_test(test_data, stats)
+    y_test_pred = re_model.predict(x_test)
 
-        write_predictions(test_data, y_test_pred, test_file, data_dir, tmp_dir)
+    write_predictions(test_data, y_test_pred, test_file, data_dir, tmp_dir)
 
     os.chdir(script_dir)
+    # return results
     # cleanup(script_dir, tmp_dir)
 
 
@@ -564,79 +603,12 @@ def plot_relations(x, y, x_label, y_label="Income"):
 
 
 if __name__ == '__main__':
-    # test_sizes = np.arange(0, 0.5, 0.005)
+    test_sizes = np.arange(0.01, 0.15001, 0.01)
+    # results = list()
     # for test_size in test_sizes:
-    #     run(test_size, training=True)
+    run(0.08, training=True)
 
-    run(0.1, training=True)
+    # sorted_results = sorted(results, key=lambda x: x[0])
+    # print(sorted_results[0])
 
-    # script_dir = os.getcwd()
-    # root_dir = os.path.dirname(script_dir)
-    # os.chdir(root_dir)
-    # data_dir = os.path.join(root_dir, "Data")
-    # if os.path.exists(data_dir):
-    #     print(data_dir)
-    # # tmp_dir = tempfile.mkdtemp(dir=root_dir)
-    #
-    # tmp_dir = os.path.join(root_dir, "tmp")
-    # if os.path.exists(tmp_dir):
-    #     shutil.rmtree(tmp_dir)
-    # os.makedirs(tmp_dir)
-    #
-    # os.chdir(data_dir)
-    # training_file = shutil.copy(FILES.get("training"), tmp_dir)
-    # os.chdir(tmp_dir)
-    # training_data = get_data(training_file)
-    # x, y, stats = process_training(training_data, remove_negative=True, use_ones=False)
-    #
-    # x_train, x_val, y_train, y_val = model_selection.train_test_split(x, y, test_size=0.3, random_state=1)
-    #
-    # # Use training data
-    # # re_model = linear_model.LinearRegression()
-    # re_model = linear_model.Ridge(alpha=1.0, normalize=True)
-    # re_model.fit(x_train, y_train)
-    #
-    # # Use validation data
-    # y_val_pred = re_model.predict(x_val)
-    #
-    # # The coefficients
-    # print('Coefficients: \n', re_model.coef_)
-    # # The mean squared error
-    # mse = sk.metrics.mean_squared_error(y_val, y_val_pred)
-    # rmse = sqrt(mse)
-    # print("Mean squared error: {:,.2f}".format(mse))
-    # print("RMSE: {:,.5f}".format(rmse))
-    # # Explained variance score: 1 is perfect prediction
-    # print('Variance score: %.2f' % sk.metrics.r2_score(y_val, y_val_pred))
-    #
-    # # Plot outputs
-    # # plt.figure()
-    # # plt.scatter(x_val[:, 4], y_val, color='black')
-    # # plt.plot(x_val[:, 4], y_val_pred, color='blue', linewidth=3)
-    # #
-    # # plt.xticks(())
-    # # plt.yticks(())
-    # #
-    # # plt.show()
-    #
-    # # Output test predictions
-    # # os.chdir(data_dir)
-    # # test_file = shutil.copy(FILES.get("test"), tmp_dir)
-    # # os.chdir(tmp_dir)
-    # # test_data = get_data(test_file)
-    # # x_test = process_test(test_data, stats, use_ones=True)
-    # # y_test_pred = re_model.predict(x_test)
-    # #
-    # # # Write to test file
-    # # test_data["Income"] = y_test_pred
-    # # test_data.to_csv(test_file, index=False)
-    # # # Write to submission file
-    # # os.chdir(data_dir)
-    # # submission_file = shutil.copy(FILES["submission"]["use"], tmp_dir)
-    # # os.chdir(tmp_dir)
-    # # submission_df = get_data(submission_file)
-    # # submission_df["Income"] = y_test_pred
-    # # submission_df.to_csv(submission_file, index=False)
-    #
-    # os.chdir(script_dir)
-    # # cleanup(script_dir)
+    # run(0.1, training=True)
